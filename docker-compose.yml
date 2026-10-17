@@ -1,0 +1,12 @@
+services:
+  lms-panel:
+    build: .
+    container_name: lms-panel
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./data:/app/data
+      - ./lms-auto.js:/app/lms-auto.js:ro
+      - ./server.js:/app/server.js:ro
+    shm_size: "2gb"

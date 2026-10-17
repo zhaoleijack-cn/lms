@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<!-- v2: log auto-refresh (polling fallback + ws protocol fix) -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LMS 刷课面板</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; background: #0f1923; color: #c9d1d9; min-height: 100vh; }
+.header { background: #161b22; padding: 16px 24px; border-bottom: 1px solid #30363d; display: flex; align-items: center; justify-content: space-between; }
+.header h1 { font-size: 18px; color: #58a6ff; }
+.header .badge { font-size: 12px; color: #8b949e; }
+.container { display: flex; gap: 16px; padding: 16px; height: calc(100vh - 57px); }
+.left-panel { width: 360px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.right-panel { flex: 1; display: flex; flex-direction: column; background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
+.card h2 { font-size: 14px; color: #58a6ff; margin-bottom: 12px; }
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+.form-group input, .form-group select, .form-group textarea {
+  width: 100%; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px;
+}
+.form-group input:focus, .form-group select:focus { outline: none; border-color: #58a6ff; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: 0.2s; }
+.btn-primary { background: #238636; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.btn-danger { background: #da3633; color: #fff; }
+.btn-danger:hover { background: #f85149; }
+.btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+.btn-secondary:hover { background: #30363d; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.account-list { display: flex; flex-direction: column; gap: 8px; }
+.account-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #0d1117; border-radius: 6px; }
+.account-item .info { flex: 1; }
+.account-item .info .label { font-size: 13px; color: #c9d1d9; }
+.account-item .info .user { font-size: 11px; color: #8b949e; }
+.account-item .actions { display: flex; gap: 6px; }
+.radio-group { display: flex; gap: 12px; }
+.radio-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 13px; color: #c9d1d9; }
+.checkbox-group { display: flex; gap: 12px; }
+.checkbox-group label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 13px; color: #c9d1d9; }
+.task-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #30363d; }
+.task-header .title { font-size: 14px; color: #58a6ff; }
+.status-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+.status-running { background: #1f6feb33; color: #58a6ff; }
+.status-done { background: #23863633; color: #3fb950; }
+.status-error { background: #da363333; color: #f85149; }
+.status-stopped { background: #8b949e33; color: #8b949e; }
+.log-area { flex: 1; overflow-y: auto; padding: 12px 16px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; line-height: 1.6; }
+.log-line { white-space: pre-wrap; word-break: break-all; }
+.log-info { color: #c9d1d9; }
+.log-warn { color: #d29922; }
+.log-error { color: #f85149; }
+.log-time { color: #484f58; margin-right: 8px; }
+.task-list { max-height: 200px; overflow-y: auto; }
+.task-list-item { padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 6px; cursor: pointer; font-size: 12px; }
+.task-list-item:hover { border-color: #58a6ff; }
+.task-list-item.active { border-color: #58a6ff; background: #161b22; }
+.empty { text-align: center; color: #484f58; padding: 40px; font-size: 13px; }
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🎬 LMS 刷课面板</h1>
+  <span class="badge">企学宝 · 自动刷课</span>
+</div>
+<div class="container">
+  <div class="left-panel">
+    <!-- Add Account -->
+    <div class="card">
+      <h2>➕ 添加账号</h2>
+      <div class="form-group">
+        <label>标签（备注）</label>
+        <input type="text" id="acc-label" placeholder="如：张三">
+      </div>
+      <div class="form-group">
+        <label>手机号</label>
+        <input type="text" id="acc-user" placeholder="手机号">
+      </div>
+      <div class="form-group">
+        <label>密码</label>
+        <input type="password" id="acc-pass" placeholder="密码">
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="addAccount()">添加</button>
+    </div>
+
+    <!-- Account List -->
+    <div class="card">
+      <h2>👤 账号列表</h2>
+      <div class="account-list" id="account-list"><div class="empty">暂无账号</div></div>
+    </div>
+
+    <!-- Run Config -->
+    <div class="card">
+      <h2>🚀 执行配置</h2>
+      <div class="form-group">
+        <label>选择账号</label>
+        <select id="run-account"></select>
+      </div>
+      <div class="form-group">
+        <label>模式</label>
+        <div class="radio-group">
+          <label><input type="radio" name="mode" value="search" checked> 搜索课程</label>
+          <label><input type="radio" name="mode" value="url"> 指定URL</label>
+        </div>
+      </div>
+      <div class="form-group" id="search-group">
+        <label>课程名</label>
+        <input type="text" id="run-keyword" placeholder="如：课程关键词">
+      </div>
+      <div class="form-group" id="url-group" style="display:none">
+        <label>播放页URL</label>
+        <textarea id="run-url" rows="2" placeholder="https://your-lms.example.com/..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>章节（可选，逗号分隔）</label>
+        <input type="text" id="run-chapters" placeholder="留空自动检测">
+      </div>
+      <div class="form-group">
+        <div class="checkbox-group">
+          <label><input type="checkbox" id="run-noquiz"> 跳过测验</label>
+          <label><input type="checkbox" id="run-noheadless"> 显示浏览器</label>
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn btn-primary" style="flex:2" onclick="startTask()">▶️ 开始</button>
+        <button class="btn btn-danger" onclick="stopTask()">⏹️ 停止</button>
+      </div>
+    </div>
+
+    <!-- Task History -->
+    <div class="card">
+      <h2>📋 任务记录</h2>
+      <div class="task-list" id="task-list"><div class="empty">暂无任务</div></div>
+    </div>
+  </div>
+
+  <!-- Log Panel -->
+  <div class="right-panel">
+    <div class="task-header">
+      <span class="title" id="log-title">实时日志</span>
+      <span id="task-status"></span>
+    </div>
+    <div class="log-area" id="log-area">
+      <div class="empty">选择或启动一个任务查看日志</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentTaskId = null;
+let ws = null;
+let lastLogLen = 0;        // 已渲染的日志条数（轮询增量追加用）
+let renderedTaskId = null; // 已渲染日志对应的任务ID
+let pollPaused = false;    // 任务结束后暂停轮询
+
+// ===== Accounts =====
+async function loadAccounts() {
+  const res = await fetch('/api/accounts');
+  const accounts = await res.json();
+  const list = document.getElementById('account-list');
+  const sel = document.getElementById('run-account');
+  if (accounts.length === 0) {
+    list.innerHTML = '<div class="empty">暂无账号</div>';
+  } else {
+    list.innerHTML = accounts.map(a => `
+      <div class="account-item">
+        <div class="info">
+          <div class="label">${a.label}</div>
+          <div class="user">${a.user}</div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="delAccount('${a.id}')">删除</button>
+        </div>
+      </div>`).join('');
+  }
+  sel.innerHTML = accounts.length ? accounts.map(a => `<option value="${a.id}">${a.label} (${a.user})</option>`).join('') : '<option value="">请先添加账号</option>';
+}
+
+async function addAccount() {
+  const label = document.getElementById('acc-label').value.trim();
+  const user = document.getElementById('acc-user').value.trim();
+  const pass = document.getElementById('acc-pass').value.trim();
+  if (!user || !pass) return alert('请填写用户名和密码');
+  await fetch('/api/accounts', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user, pass, label })
+  });
+  document.getElementById('acc-label').value = '';
+  document.getElementById('acc-user').value = '';
+  document.getElementById('acc-pass').value = '';
+  loadAccounts();
+}
+
+async function delAccount(id) {
+  if (!confirm('删除该账号？')) return;
+  await fetch('/api/accounts/' + id, { method: 'DELETE' });
+  loadAccounts();
+}
+
+// ===== Mode toggle =====
+document.querySelectorAll('input[name="mode"]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('search-group').style.display = document.querySelector('input[name="mode"]:checked').value === 'search' ? '' : 'none';
+    document.getElementById('url-group').style.display = document.querySelector('input[name="mode"]:checked').value === 'url' ? '' : 'none';
+  });
+});
+
+// ===== Tasks =====
+async function startTask() {
+  const accountId = document.getElementById('run-account').value;
+  if (!accountId) return alert('请先添加并选择账号');
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const keyword = document.getElementById('run-keyword').value.trim();
+  const url = document.getElementById('run-url').value.trim();
+  if (mode === 'search' && !keyword) return alert('请输入课程名');
+  if (mode === 'url' && !url) return alert('请输入播放页URL');
+
+  const body = {
+    accountId, mode,
+    keyword: mode === 'search' ? keyword : '',
+    url: mode === 'url' ? url : '',
+    chapters: document.getElementById('run-chapters').value.trim(),
+    noQuiz: document.getElementById('run-noquiz').checked,
+    noHeadless: document.getElementById('run-noheadless').checked,
+  };
+  const res = await fetch('/api/run', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (data.ok) {
+    currentTaskId = data.taskId;
+    lastLogLen = 0; renderedTaskId = data.taskId; pollPaused = false;
+    connectWS(data.taskId);
+    loadTasks();
+  } else {
+    alert('启动失败: ' + (data.error || '未知错误'));
+  }
+}
+
+async function stopTask() {
+  if (!currentTaskId) return;
+  await fetch('/api/tasks/' + currentTaskId + '/stop', { method: 'POST' });
+}
+
+async function loadTasks() {
+  const res = await fetch('/api/tasks');
+  const tasks = await res.json();
+  const list = document.getElementById('task-list');
+  if (tasks.length === 0) {
+    list.innerHTML = '<div class="empty">暂无任务</div>';
+    return;
+  }
+  list.innerHTML = tasks.reverse().map(t => `
+    <div class="task-list-item ${t.id === currentTaskId ? 'active' : ''}" onclick="viewTask('${t.id}')">
+      <div>${t.accountLabel} · ${t.mode === 'search' ? t.keyword : 'URL'}</div>
+      <div style="color:#8b949e;font-size:11px">${t.startTime?.substring(11,19)} | <span class="status-badge status-${t.status}">${t.status}</span></div>
+    </div>`).join('');
+}
+
+async function viewTask(taskId) {
+  currentTaskId = taskId;
+  const res = await fetch('/api/tasks/' + taskId);
+  const t = await res.json();
+  document.getElementById('log-title').textContent = `${t.accountLabel} · ${t.mode === 'search' ? t.keyword : 'URL'}`;
+  const area = document.getElementById('log-area');
+  area.innerHTML = '';
+  t.log.forEach(e => area.appendChild(logLine(e)));
+  lastLogLen = t.log.length; renderedTaskId = taskId; pollPaused = false;
+  area.scrollTop = area.scrollHeight;
+  updateStatus(t.status);
+  connectWS(taskId);
+  loadTasks();
+}
+
+// ===== WebSocket =====
+function connectWS(taskId) {
+  if (ws) ws.close();
+  // https 页面必须用 wss，否则浏览器按混合内容拦截
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws?taskId=${taskId}`);
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'init') {
+      const area = document.getElementById('log-area');
+      area.innerHTML = '';
+      msg.log.forEach(e => area.appendChild(logLine(e)));
+      lastLogLen = msg.log.length; renderedTaskId = taskId;
+      updateStatus(msg.status);
+      area.scrollTop = area.scrollHeight;
+    } else if (msg.type === 'log') {
+      const area = document.getElementById('log-area');
+      area.appendChild(logLine(msg.entry));
+      lastLogLen++;
+      area.scrollTop = area.scrollHeight;
+    } else if (msg.type === 'status') {
+      updateStatus(msg.status);
+      loadTasks();
+    }
+  };
+  // 连接失败或断开都无需处理：下面的轮询会兜底刷新
+}
+
+// ===== 日志轮询兜底（WS 不可用/被代理拦截时也能自动刷新）=====
+async function pollTask() {
+  if (!currentTaskId || pollPaused) return;
+  try {
+    const res = await fetch('/api/tasks/' + currentTaskId);
+    if (!res.ok) return;
+    const t = await res.json();
+    if (renderedTaskId !== currentTaskId || !t.log) return;
+    if (t.log.length > lastLogLen) {
+      const area = document.getElementById('log-area');
+      const nearBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+      for (let i = lastLogLen; i < t.log.length; i++) area.appendChild(logLine(t.log[i]));
+      lastLogLen = t.log.length;
+      if (nearBottom) area.scrollTop = area.scrollHeight;
+    }
+    updateStatus(t.status);
+    pollPaused = t.status && t.status !== 'running';
+  } catch {}
+}
+
+function updateStatus(status) {
+  const el = document.getElementById('task-status');
+  if (status) el.innerHTML = `<span class="status-badge status-${status}">${status}</span>`;
+}
+
+function logLine(e) {
+  const div = document.createElement('div');
+  div.className = 'log-line log-' + (e.level || 'info');
+  const time = e.time?.substring(11, 19) || '';
+  div.innerHTML = `<span class="log-time">${time}</span>${escapeHtml(e.msg)}`;
+  return div;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Init
+loadAccounts();
+loadTasks();
+setInterval(loadTasks, 5000);
+setInterval(pollTask, 4000);
+</script>
+</body>
+</html>

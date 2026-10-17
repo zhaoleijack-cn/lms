@@ -1,0 +1,6 @@
+data/
+*.bak*
+node_modules/
+*.tar.gz
+answerbank.json
+.env
